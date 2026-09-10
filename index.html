@@ -128,6 +128,7 @@
 <nav class="tabs">
   <button class="tab-btn active" data-tab="tab-master">Master COA</button>
   <button class="tab-btn" data-tab="tab-jurnal">Cek Jurnal</button>
+  <button class="tab-btn" data-tab="tab-bankjurnal">Cek Bank vs Jurnal</button>
   <button class="tab-btn" data-tab="tab-riwayat">Riwayat</button>
 </nav>
 
@@ -163,8 +164,14 @@
     </div>
 
     <div class="card" id="mappingCard" style="display:none;">
-      <h2>2. Cocokkan Kolom</h2>
-      <p class="hint">Pilih kolom di file kamu yang sesuai dengan tiap kebutuhan berikut.</p>
+      <h2>2. Pilih Sheet &amp; Cocokkan Kolom</h2>
+      <div class="mapping-grid">
+        <div>
+          <label>Sheet yang mau diperiksa</label>
+          <select id="jurnalSheetSelect"></select>
+        </div>
+      </div>
+      <p class="hint" id="headerDetectInfo"></p>
       <div class="mapping-grid">
         <div>
           <label>Kolom Kode Akun</label>
@@ -202,6 +209,49 @@
       </div>
       <div style="margin-top:16px;">
         <button class="btn secondary" id="btnSimpanRiwayat">Simpan ke Riwayat</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- TAB CEK BANK VS JURNAL -->
+  <section class="tab" id="tab-bankjurnal">
+    <div class="card">
+      <h2>1. Upload File (yang berisi sheet Bank &amp; sheet Jurnal Bank)</h2>
+      <p class="hint">Upload 1 file Excel yang di dalamnya ada sheet transaksi Bank dan sheet Jurnal yang mencatat transaksi tersebut. Fitur ini mengecek apakah tiap transaksi di sheet Bank sudah ada jurnalnya.</p>
+      <input type="file" id="bankFile" accept=".xlsx,.xls">
+    </div>
+
+    <div class="card" id="bankMappingCard" style="display:none;">
+      <h2>2. Pilih Sheet</h2>
+      <div class="mapping-grid">
+        <div>
+          <label>Sheet Transaksi Bank (sumber)</label>
+          <select id="bankSheetSelect"></select>
+        </div>
+        <div>
+          <label>Sheet Jurnal Pembanding</label>
+          <select id="bankJurnalSheetSelect"></select>
+        </div>
+      </div>
+      <p class="hint">Catatan: karena format tanggal di sheet jurnal seringkali tidak konsisten/rapi, pencocokan dilakukan berdasarkan <strong>jumlah nominal uang yang sama persis</strong>, bukan tanggal. Hasil "Sudah Ada" berarti ditemukan nominal yang cocok — tetap perlu dicek sekilas manual untuk memastikan itu transaksi yang benar-benar sama.</p>
+      <button class="btn" id="btnProsesBankJurnal">Proses &amp; Cocokkan</button>
+    </div>
+
+    <div class="card" id="bankResultCard" style="display:none;">
+      <h2>3. Hasil Pencocokan</h2>
+      <div class="summary-row" id="bankSummaryRow"></div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th style="width:110px;">Tanggal</th>
+              <th>Keterangan (Bank)</th>
+              <th style="width:150px;">Jumlah</th>
+              <th style="width:170px;">Status</th>
+            </tr>
+          </thead>
+          <tbody id="bankResultTableBody"></tbody>
+        </table>
       </div>
     </div>
   </section>
@@ -323,6 +373,41 @@ function findHeaderIndexAny(headers, keywords){
 const KODE_KEYWORDS = ['kode akun','kode perkiraan','no akun','no. akun','account code','kode','coa'];
 const NAMA_KEYWORDS = ['nama akun','account name','keterangan','uraian','deskripsi','description','nama'];
 const KATEGORI_KEYWORDS = ['kategori','category','jenis akun','tipe akun'];
+const ALL_HEADER_KEYWORDS = KODE_KEYWORDS.concat(NAMA_KEYWORDS, ['tanggal','date','debit','kredit','credit','jumlah','amount','description','summary','ref','account','no.']);
+
+// Cari baris yang paling mirip baris judul kolom (header), memindai s.d. 20 baris pertama.
+function detectHeaderRow(rows){
+  let bestIdx = 0, bestScore = -1;
+  const limit = Math.min(rows.length, 20);
+  for(let i=0;i<limit;i++){
+    const row = rows[i];
+    if(!row) continue;
+    let score = 0;
+    row.forEach(cell=>{
+      const c = normLower(cell);
+      if(!c) return;
+      if(ALL_HEADER_KEYWORDS.some(kw=>c.includes(kw))) score++;
+    });
+    if(score > bestScore){ bestScore = score; bestIdx = i; }
+  }
+  return bestScore>0 ? bestIdx : 0;
+}
+
+function readWorkbookObject(file){
+  return new Promise((resolve,reject)=>{
+    const reader = new FileReader();
+    reader.onload = e=>{
+      try{ resolve(XLSX.read(e.target.result, {type:'array', cellDates:true})); }
+      catch(err){ reject(err); }
+    };
+    reader.onerror = reject;
+    reader.readAsArrayBuffer(file);
+  });
+}
+function sheetToAOA(wb, sheetName){
+  const sheet = wb.Sheets[sheetName];
+  return XLSX.utils.sheet_to_json(sheet, {header:1, defval:'', raw:true});
+}
 
 /* ====================== MASTER COA ====================== */
 let masterCoaList = []; // {kode, nama, kategori}
@@ -364,16 +449,17 @@ document.getElementById('btnUploadMaster').addEventListener('click', async ()=>{
   try{
     const rows = await readWorkbook(file);
     if(rows.length < 2){ toast('File kosong atau tidak terbaca.'); return; }
-    const headers = rows[0].map(h=>norm(h));
+    const headerIdx = detectHeaderRow(rows);
+    const headers = (rows[headerIdx]||[]).map(h=>norm(h));
     const idxKode = findHeaderIndexAny(headers, KODE_KEYWORDS);
     const idxNama = findHeaderIndexAny(headers, NAMA_KEYWORDS);
     const idxKategori = findHeaderIndexAny(headers, KATEGORI_KEYWORDS);
     if(idxKode===-1 || idxNama===-1){
-      toast('Kolom kode akun dan/atau nama akun tidak ditemukan di baris judul file ini. Judul kolom terbaca: ' + headers.filter(h=>h).join(', '));
+      toast('Kolom kode akun dan/atau nama akun tidak ditemukan. Judul kolom terbaca (baris ke-' + (headerIdx+1) + '): ' + headers.filter(h=>h).join(', '));
       return;
     }
     const newMaster = {};
-    for(let i=1;i<rows.length;i++){
+    for(let i=headerIdx+1;i<rows.length;i++){
       const r = rows[i];
       const kode = norm(r[idxKode]);
       if(!kode) continue;
@@ -416,7 +502,8 @@ function addToKamus(teks){
 }
 
 /* ====================== CEK JURNAL ====================== */
-let jurnalRows = [];    // raw rows incl header
+let jurnalWB = null;
+let jurnalDataRows = [];    // baris data (setelah baris judul)
 let jurnalHeaders = [];
 let lastResults = [];
 let lastFileName = '';
@@ -426,18 +513,34 @@ document.getElementById('jurnalFile').addEventListener('change', async (e)=>{
   if(!file) return;
   lastFileName = file.name;
   try{
-    const rows = await readWorkbook(file);
-    if(rows.length < 2){ toast('File kosong atau tidak terbaca.'); return; }
-    jurnalHeaders = rows[0].map(h=>norm(h));
-    jurnalRows = rows.slice(1).filter(r=>r.some(c=>norm(c)!==''));
-    buildMappingUI();
+    jurnalWB = await readWorkbookObject(file);
+    const names = jurnalWB.SheetNames;
+    const sel = document.getElementById('jurnalSheetSelect');
+    sel.innerHTML = names.map(n=>`<option value="${escapeHtml(n)}">${escapeHtml(n)}</option>`).join('');
+    sel.value = names[0];
     document.getElementById('mappingCard').style.display = 'block';
     document.getElementById('resultCard').style.display = 'none';
+    loadJurnalSheet(names[0]);
   }catch(err){
     console.error(err);
     toast('Gagal membaca file: ' + err.message);
   }
 });
+
+document.getElementById('jurnalSheetSelect').addEventListener('change', (e)=>{
+  loadJurnalSheet(e.target.value);
+});
+
+function loadJurnalSheet(sheetName){
+  const rows = sheetToAOA(jurnalWB, sheetName);
+  if(!rows || rows.length===0){ toast('Sheet ini kosong.'); return; }
+  const headerIdx = detectHeaderRow(rows);
+  jurnalHeaders = (rows[headerIdx]||[]).map(h=>norm(h));
+  jurnalDataRows = rows.slice(headerIdx+1).filter(r=>r && r.some(c=>norm(c)!==''));
+  document.getElementById('headerDetectInfo').textContent =
+    'Baris judul kolom terdeteksi di baris ke-' + (headerIdx+1) + ': ' + (jurnalHeaders.filter(h=>h).join(', ') || '(tidak terbaca jelas, silakan cek manual di dropdown kolom di bawah)');
+  buildMappingUI();
+}
 
 function buildMappingUI(){
   const opts = jurnalHeaders.map((h,i)=>`<option value="${i}">${escapeHtml(h || ('Kolom '+(i+1)))}</option>`).join('');
@@ -446,8 +549,8 @@ function buildMappingUI(){
   const selKode = document.getElementById('mapKode');
   const selNama = document.getElementById('mapNama');
   const selKet = document.getElementById('mapKeterangan');
-  selKode.innerHTML = opts;
-  selNama.innerHTML = opts;
+  selKode.innerHTML = emptyOpt + opts;
+  selNama.innerHTML = emptyOpt + opts;
   selKet.innerHTML = emptyOpt + opts;
 
   const guessKode = findHeaderIndexAny(jurnalHeaders, KODE_KEYWORDS);
@@ -473,7 +576,7 @@ document.getElementById('btnProsesJurnal').addEventListener('click', async ()=>{
   // Kumpulkan frekuensi keterangan unik dalam file ini utk deteksi typo internal
   const freq = {};
   if(idxKet>-1){
-    jurnalRows.forEach(r=>{
+    jurnalDataRows.forEach(r=>{
       const v = norm(r[idxKet]);
       if(v) freq[v] = (freq[v]||0) + 1;
     });
@@ -490,9 +593,9 @@ document.getElementById('btnProsesJurnal').addEventListener('click', async ()=>{
     return {best, bestScore};
   }
 
-  const results = jurnalRows.map(r=>{
-    const kode = norm(r[idxKode]);
-    const nama = norm(r[idxNama]);
+  const results = jurnalDataRows.map(r=>{
+    const kode = idxKode>-1 ? norm(r[idxKode]) : '';
+    const nama = idxNama>-1 ? norm(r[idxNama]) : '';
     const ket = idxKet>-1 ? norm(r[idxKet]) : '';
     let status = 'ok';
     let notes = [];
@@ -502,7 +605,7 @@ document.getElementById('btnProsesJurnal').addEventListener('click', async ()=>{
       status = 'danger'; notes.push('Kode akun kosong.');
     } else if(!masterMatch){
       status = 'danger'; notes.push('Kode akun tidak ditemukan di master COA.');
-    } else if(normLower(masterMatch.nama) !== normLower(nama)){
+    } else if(idxNama>-1 && normLower(masterMatch.nama) !== normLower(nama)){
       status = 'warn'; notes.push('Nama akun berbeda dari master (seharusnya: "' + masterMatch.nama + '").');
     }
 
@@ -598,6 +701,139 @@ function loadRiwayat(){
       <td>${item.jumlahTemuan}</td>
     </tr>`).join('');
   });
+}
+
+/* ====================== CEK BANK VS JURNAL ====================== */
+let bankWB = null;
+
+document.getElementById('bankFile').addEventListener('change', async (e)=>{
+  const file = e.target.files[0];
+  if(!file) return;
+  try{
+    bankWB = await readWorkbookObject(file);
+    const names = bankWB.SheetNames;
+    const optsHtml = names.map(n=>`<option value="${escapeHtml(n)}">${escapeHtml(n)}</option>`).join('');
+    const selBank = document.getElementById('bankSheetSelect');
+    const selJurnal = document.getElementById('bankJurnalSheetSelect');
+    selBank.innerHTML = optsHtml;
+    selJurnal.innerHTML = optsHtml;
+
+    const guessBankIdx = names.findIndex(n=> normLower(n).includes('bank') && !normLower(n).includes('jurnal'));
+    const guessJurnalIdx = names.findIndex(n=> normLower(n).includes('bank') && normLower(n).includes('jurnal'));
+    if(guessBankIdx>-1) selBank.value = names[guessBankIdx];
+    if(guessJurnalIdx>-1) selJurnal.value = names[guessJurnalIdx];
+
+    document.getElementById('bankMappingCard').style.display = 'block';
+    document.getElementById('bankResultCard').style.display = 'none';
+  }catch(err){
+    console.error(err);
+    toast('Gagal membaca file: ' + err.message);
+  }
+});
+
+// Ambil daftar transaksi dari sheet Bank: cari kolom Tanggal/Deskripsi/Jumlah,
+// tanggal yang kosong dianggap sama dengan tanggal terakhir yang terisi di atasnya.
+function extractBankTransactions(rows){
+  const headerIdx = detectHeaderRow(rows);
+  const headers = (rows[headerIdx]||[]).map(h=>norm(h));
+  const idxDate = findHeaderIndexAny(headers, ['tanggal','date']);
+  const idxDesc = findHeaderIndexAny(headers, ['description','keterangan','uraian']);
+  const idxAmount = findHeaderIndexAny(headers, ['amount','jumlah','nominal']);
+
+  const out = [];
+  let lastDate = '';
+  for(let i=headerIdx+1;i<rows.length;i++){
+    const r = rows[i] || [];
+    const dateCell = idxDate>-1 ? r[idxDate] : '';
+    const descCell = idxDesc>-1 ? norm(r[idxDesc]) : '';
+    const amountRaw = idxAmount>-1 ? r[idxAmount] : '';
+    const amountNum = parseFloat(String(amountRaw).replace(/[^0-9.-]/g,''));
+
+    if(dateCell instanceof Date){ lastDate = dateCell.toLocaleDateString('id-ID'); }
+    else if(norm(dateCell)){ lastDate = norm(dateCell); }
+
+    if(descCell && !isNaN(amountNum) && amountNum !== 0){
+      out.push({ tanggal: lastDate, keterangan: descCell, jumlah: amountNum });
+    }
+  }
+  return out;
+}
+
+// Kumpulkan semua nilai angka (bukan nol) di seluruh sel sheet pembanding, sebagai "kolam" nominal.
+function extractAmountFrequencyMap(rows){
+  const map = new Map();
+  const add = (n)=>{
+    const key = Math.round(Math.abs(n)*100)/100;
+    if(key===0) return;
+    map.set(key, (map.get(key)||0)+1);
+  };
+  rows.forEach(row=>{
+    (row||[]).forEach(cell=>{
+      if(typeof cell === 'number'){ add(cell); }
+      else{
+        const s = norm(cell);
+        if(s && /^-?[0-9][0-9.,]*(\.[0-9]+)?$/.test(s.replace(/,/g,''))){
+          const n = parseFloat(s.replace(/,/g,''));
+          if(!isNaN(n)) add(n);
+        }
+      }
+    });
+  });
+  return map;
+}
+
+document.getElementById('btnProsesBankJurnal').addEventListener('click', ()=>{
+  const bankSheetName = document.getElementById('bankSheetSelect').value;
+  const jurnalSheetName = document.getElementById('bankJurnalSheetSelect').value;
+  if(!bankSheetName || !jurnalSheetName){ toast('Pilih kedua sheet dulu.'); return; }
+
+  const bankRows = sheetToAOA(bankWB, bankSheetName);
+  const jurnalRowsRaw = sheetToAOA(bankWB, jurnalSheetName);
+
+  const bankTx = extractBankTransactions(bankRows);
+  if(bankTx.length===0){ toast('Tidak ada transaksi (tanggal/keterangan/jumlah) yang terbaca di sheet Bank ini.'); return; }
+
+  const freqMap = extractAmountFrequencyMap(jurnalRowsRaw);
+
+  const results = bankTx.map(tx=>{
+    const key = Math.round(Math.abs(tx.jumlah)*100)/100;
+    let status, note;
+    if((freqMap.get(key)||0) > 0){
+      freqMap.set(key, freqMap.get(key)-1);
+      status = 'ok'; note = 'Ditemukan jumlah yang sama di sheet jurnal.';
+    } else {
+      status = 'danger'; note = 'Tidak ditemukan jumlah yang sama di sheet jurnal — kemungkinan belum dijurnal.';
+    }
+    return {...tx, status, note};
+  });
+
+  renderBankResults(results);
+});
+
+function renderBankResults(results){
+  const total = results.length;
+  const danger = results.filter(r=>r.status==='danger').length;
+  const ok = total - danger;
+
+  document.getElementById('bankSummaryRow').innerHTML = `
+    <div class="summary-pill"><div class="num">${total}</div><div class="lbl">Total Transaksi Bank</div></div>
+    <div class="summary-pill"><div class="num" style="color:var(--ok-text)">${ok}</div><div class="lbl">Sudah Ada Jurnalnya</div></div>
+    <div class="summary-pill"><div class="num" style="color:var(--danger-text)">${danger}</div><div class="lbl">Belum Ditemukan</div></div>
+  `;
+
+  const body = document.getElementById('bankResultTableBody');
+  body.innerHTML = results.map(r=>{
+    const badge = r.status==='ok' ? '<span class="badge ok">Sudah Ada</span>' : '<span class="badge danger">Belum Ditemukan</span>';
+    const rowClass = r.status==='ok' ? 'row-ok' : 'row-danger';
+    return `<tr class="${rowClass}">
+      <td>${escapeHtml(r.tanggal)}</td>
+      <td>${escapeHtml(r.keterangan)}</td>
+      <td>${r.jumlah.toLocaleString('id-ID')}</td>
+      <td>${badge} <span style="color:var(--text-muted); font-size:12px;">${escapeHtml(r.note)}</span></td>
+    </tr>`;
+  }).join('');
+
+  document.getElementById('bankResultCard').style.display = 'block';
 }
 
 /* ====================== TAB SWITCHING ====================== */
