@@ -1,0 +1,601 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dashboard Koreksi Jurnal &amp; COA</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-database-compat.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<style>
+  :root{
+    --bg:#F4F5F8;
+    --surface:#FFFFFF;
+    --border:#E2E5EB;
+    --text:#1D2333;
+    --text-muted:#6B7280;
+    --primary:#3B4BC4;
+    --primary-dark:#2E3A9E;
+    --ok-bg:#E9F7EF; --ok-text:#1E8E52; --ok-border:#BEE8CF;
+    --warn-bg:#FEF6E7; --warn-text:#A9690B; --warn-border:#F6DFAF;
+    --danger-bg:#FDEDEC; --danger-text:#C0392B; --danger-border:#F5C6C0;
+    --info-bg:#EEF0FC; --info-text:#3B4BC4; --info-border:#D3D8F5;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; background:var(--bg); color:var(--text);
+    font-family:'Inter',system-ui,sans-serif;
+    font-feature-settings:"tnum" 1; font-variant-numeric:tabular-nums;
+    -webkit-font-smoothing:antialiased;
+  }
+  header{
+    background:var(--surface); border-bottom:1px solid var(--border);
+    padding:20px 28px; display:flex; align-items:center; justify-content:space-between;
+  }
+  header h1{ font-size:19px; font-weight:700; margin:0; letter-spacing:-0.01em; }
+  header .sub{ font-size:13px; color:var(--text-muted); margin-top:2px; }
+  #auth-status{ font-size:12px; color:var(--text-muted); }
+  #auth-status .dot{ display:inline-block; width:7px; height:7px; border-radius:50%; background:#CBD0DA; margin-right:6px; }
+  #auth-status.ready .dot{ background:#1E8E52; }
+
+  nav.tabs{
+    display:flex; gap:4px; padding:0 28px; background:var(--surface);
+    border-bottom:1px solid var(--border); overflow-x:auto;
+  }
+  nav.tabs button{
+    border:none; background:transparent; padding:14px 16px; font-size:14px;
+    font-weight:600; color:var(--text-muted); cursor:pointer; border-bottom:2px solid transparent;
+    font-family:inherit; white-space:nowrap;
+  }
+  nav.tabs button.active{ color:var(--primary); border-bottom-color:var(--primary); }
+
+  main{ max-width:1120px; margin:0 auto; padding:28px 20px 60px; }
+  section.tab{ display:none; }
+  section.tab.active{ display:block; }
+
+  .card{
+    background:var(--surface); border:1px solid var(--border); border-radius:10px;
+    padding:22px; margin-bottom:20px;
+  }
+  .card h2{ font-size:16px; margin:0 0 4px; }
+  .card p.hint{ font-size:13px; color:var(--text-muted); margin:0 0 16px; line-height:1.5; }
+
+  .btn{
+    display:inline-flex; align-items:center; gap:8px; background:var(--primary); color:#fff;
+    border:none; padding:10px 16px; border-radius:7px; font-size:13.5px; font-weight:600;
+    cursor:pointer; font-family:inherit;
+  }
+  .btn:hover{ background:var(--primary-dark); }
+  .btn.secondary{ background:var(--surface); color:var(--text); border:1px solid var(--border); }
+  .btn.secondary:hover{ background:var(--bg); }
+  .btn:disabled{ opacity:.5; cursor:not-allowed; }
+  .btn.small{ padding:6px 11px; font-size:12.5px; border-radius:6px; }
+
+  input[type=file]{ font-size:13px; }
+  select, input[type=text]{
+    font-family:inherit; font-size:13.5px; padding:8px 10px; border:1px solid var(--border);
+    border-radius:6px; background:#fff; color:var(--text);
+  }
+
+  table{ width:100%; border-collapse:collapse; font-size:13.5px; }
+  th{ text-align:left; font-weight:600; color:var(--text-muted); font-size:12px;
+      text-transform:none; padding:9px 10px; border-bottom:1px solid var(--border); }
+  td{ padding:9px 10px; border-bottom:1px solid var(--border); vertical-align:top; }
+  tr:last-child td{ border-bottom:none; }
+  .table-wrap{ overflow-x:auto; border:1px solid var(--border); border-radius:8px; }
+
+  .badge{ display:inline-block; padding:3px 9px; border-radius:20px; font-size:12px; font-weight:600; }
+  .badge.ok{ background:var(--ok-bg); color:var(--ok-text); }
+  .badge.warn{ background:var(--warn-bg); color:var(--warn-text); }
+  .badge.danger{ background:var(--danger-bg); color:var(--danger-text); }
+
+  .row-ok td{ }
+  .row-warn td{ background:var(--warn-bg); }
+  .row-danger td{ background:var(--danger-bg); }
+
+  .empty{ color:var(--text-muted); font-size:13.5px; padding:24px; text-align:center; }
+
+  .mapping-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:14px; margin-bottom:18px; }
+  .mapping-grid label{ display:block; font-size:12.5px; font-weight:600; color:var(--text-muted); margin-bottom:6px; }
+  .mapping-grid select{ width:100%; }
+
+  .summary-row{ display:flex; gap:12px; flex-wrap:wrap; margin-bottom:18px; }
+  .summary-pill{ flex:1; min-width:130px; border:1px solid var(--border); border-radius:8px; padding:12px 14px; }
+  .summary-pill .num{ font-size:22px; font-weight:800; }
+  .summary-pill .lbl{ font-size:12px; color:var(--text-muted); }
+
+  .toast{
+    position:fixed; bottom:20px; right:20px; background:var(--text); color:#fff;
+    padding:11px 16px; border-radius:8px; font-size:13px; opacity:0; transform:translateY(8px);
+    transition:all .25s; pointer-events:none; max-width:320px;
+  }
+  .toast.show{ opacity:1; transform:translateY(0); }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>Dashboard Koreksi Jurnal &amp; COA</h1>
+    <div class="sub">Cek kesesuaian kode/nama akun dan kemungkinan typo pada jurnal staff</div>
+  </div>
+  <div id="auth-status"><span class="dot"></span>Menghubungkan...</div>
+</header>
+
+<nav class="tabs">
+  <button class="tab-btn active" data-tab="tab-master">Master COA</button>
+  <button class="tab-btn" data-tab="tab-jurnal">Cek Jurnal</button>
+  <button class="tab-btn" data-tab="tab-riwayat">Riwayat</button>
+</nav>
+
+<main>
+
+  <!-- TAB MASTER COA -->
+  <section class="tab active" id="tab-master">
+    <div class="card">
+      <h2>Upload Master COA</h2>
+      <p class="hint">File Excel harus punya kolom dengan judul mengandung kata <strong>"Kode"</strong> (kode akun) dan <strong>"Nama"</strong> (nama akun). Kolom "Kategori" bersifat opsional. Upload file baru akan <strong>mengganti seluruh</strong> master COA yang tersimpan saat ini.</p>
+      <input type="file" id="masterCoaFile" accept=".xlsx,.xls,.csv">
+      <button class="btn" id="btnUploadMaster" style="margin-left:10px;">Upload &amp; Ganti Master COA</button>
+    </div>
+
+    <div class="card">
+      <h2>Daftar Master COA Tersimpan</h2>
+      <p class="hint" id="masterCoaCount">Memuat data...</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th style="width:140px;">Kode Akun</th><th>Nama Akun</th><th style="width:160px;">Kategori</th></tr></thead>
+          <tbody id="masterCoaTableBody"><tr><td colspan="3" class="empty">Belum ada data</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- TAB CEK JURNAL -->
+  <section class="tab" id="tab-jurnal">
+    <div class="card">
+      <h2>1. Upload File Jurnal</h2>
+      <p class="hint">Upload file Excel/CSV jurnal yang dikerjakan staff. Setelah upload, kamu akan diminta menentukan kolom mana yang berisi Kode Akun, Nama Akun, dan Keterangan Transaksi.</p>
+      <input type="file" id="jurnalFile" accept=".xlsx,.xls,.csv">
+    </div>
+
+    <div class="card" id="mappingCard" style="display:none;">
+      <h2>2. Cocokkan Kolom</h2>
+      <p class="hint">Pilih kolom di file kamu yang sesuai dengan tiap kebutuhan berikut.</p>
+      <div class="mapping-grid">
+        <div>
+          <label>Kolom Kode Akun</label>
+          <select id="mapKode"></select>
+        </div>
+        <div>
+          <label>Kolom Nama Akun</label>
+          <select id="mapNama"></select>
+        </div>
+        <div>
+          <label>Kolom Keterangan Transaksi (opsional)</label>
+          <select id="mapKeterangan"></select>
+        </div>
+      </div>
+      <button class="btn" id="btnProsesJurnal">Proses &amp; Periksa Jurnal</button>
+    </div>
+
+    <div class="card" id="resultCard" style="display:none;">
+      <h2>3. Hasil Pemeriksaan</h2>
+      <div class="summary-row" id="summaryRow"></div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th style="width:90px;">Status</th>
+              <th style="width:110px;">Kode Akun</th>
+              <th>Nama Akun (ditulis staff)</th>
+              <th>Keterangan Transaksi</th>
+              <th>Catatan / Saran</th>
+              <th style="width:90px;"></th>
+            </tr>
+          </thead>
+          <tbody id="resultTableBody"></tbody>
+        </table>
+      </div>
+      <div style="margin-top:16px;">
+        <button class="btn secondary" id="btnSimpanRiwayat">Simpan ke Riwayat</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- TAB RIWAYAT -->
+  <section class="tab" id="tab-riwayat">
+    <div class="card">
+      <h2>Riwayat Pemeriksaan</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th style="width:170px;">Tanggal Diperiksa</th><th>Nama File</th><th style="width:110px;">Total Baris</th><th style="width:110px;">Jumlah Temuan</th></tr></thead>
+          <tbody id="riwayatTableBody"><tr><td colspan="4" class="empty">Belum ada riwayat</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* ====================== KONFIGURASI FIREBASE ====================== */
+const firebaseConfig = {
+  apiKey: "AIzaSyBD-GhWOe6eXzkxEIx92AioYgE8ZE3zfFs",
+  authDomain: "koreksi-jurnal-coa.firebaseapp.com",
+  databaseURL: "https://koreksi-jurnal-coa-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "koreksi-jurnal-coa",
+  storageBucket: "koreksi-jurnal-coa.firebasestorage.app",
+  messagingSenderId: "903686484376",
+  appId: "1:903686484376:web:cc89d666562e41ad7c7bed"
+};
+firebase.initializeApp(firebaseConfig);
+const db = firebase.database();
+const auth = firebase.auth();
+
+function setAuthReady(ready){
+  const el = document.getElementById('auth-status');
+  if(ready){ el.classList.add('ready'); el.innerHTML = '<span class="dot"></span>Terhubung'; }
+  else { el.innerHTML = '<span class="dot"></span>Menghubungkan...'; }
+}
+auth.onAuthStateChanged(user=>{
+  if(user){ setAuthReady(true); loadMasterCoa(); loadRiwayat(); }
+});
+auth.signInAnonymously().catch(err=>{
+  console.error(err);
+  toast('Gagal terhubung ke database: ' + err.message);
+});
+
+/* ====================== UTIL ====================== */
+function toast(msg){
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(()=>t.classList.remove('show'), 3200);
+}
+function norm(s){ return (s===undefined || s===null) ? '' : String(s).trim(); }
+function normLower(s){ return norm(s).toLowerCase(); }
+
+function levenshtein(a,b){
+  a = a||''; b = b||'';
+  const m=a.length, n=b.length;
+  if(m===0) return n;
+  if(n===0) return m;
+  const dp = new Array(n+1);
+  for(let j=0;j<=n;j++) dp[j]=j;
+  for(let i=1;i<=m;i++){
+    let prev = dp[0]; dp[0]=i;
+    for(let j=1;j<=n;j++){
+      const tmp = dp[j];
+      dp[j] = Math.min(
+        dp[j]+1,
+        dp[j-1]+1,
+        prev + (a[i-1]===b[j-1] ? 0 : 1)
+      );
+      prev = tmp;
+    }
+  }
+  return dp[n];
+}
+function similarity(a,b){
+  a = normLower(a); b = normLower(b);
+  if(a===b) return 1;
+  if(a.length===0 || b.length===0) return 0;
+  const dist = levenshtein(a,b);
+  return 1 - dist/Math.max(a.length,b.length);
+}
+
+function readWorkbook(file){
+  return new Promise((resolve,reject)=>{
+    const reader = new FileReader();
+    reader.onload = e=>{
+      try{
+        const wb = XLSX.read(e.target.result, {type:'array', cellDates:true});
+        const sheet = wb.Sheets[wb.SheetNames[0]];
+        const rows = XLSX.utils.sheet_to_json(sheet, {header:1, defval:''});
+        resolve(rows);
+      }catch(err){ reject(err); }
+    };
+    reader.onerror = reject;
+    reader.readAsArrayBuffer(file);
+  });
+}
+
+function findHeaderIndex(headers, keyword){
+  const idx = headers.findIndex(h=>normLower(h).includes(keyword));
+  return idx;
+}
+
+/* ====================== MASTER COA ====================== */
+let masterCoaList = []; // {kode, nama, kategori}
+let masterCoaMap = {};  // kode(lower) -> {kode,nama,kategori}
+
+function loadMasterCoa(){
+  db.ref('master_coa').once('value').then(snap=>{
+    const val = snap.val() || {};
+    masterCoaList = Object.values(val);
+    masterCoaMap = {};
+    masterCoaList.forEach(item=>{ masterCoaMap[normLower(item.kode)] = item; });
+    renderMasterCoaTable();
+  });
+}
+
+function renderMasterCoaTable(){
+  const body = document.getElementById('masterCoaTableBody');
+  const countEl = document.getElementById('masterCoaCount');
+  if(masterCoaList.length===0){
+    body.innerHTML = '<tr><td colspan="3" class="empty">Belum ada data. Silakan upload file master COA di atas.</td></tr>';
+    countEl.textContent = 'Belum ada data master COA tersimpan.';
+    return;
+  }
+  countEl.textContent = masterCoaList.length + ' akun tersimpan.';
+  body.innerHTML = masterCoaList
+    .sort((a,b)=> normLower(a.kode).localeCompare(normLower(b.kode)))
+    .map(item=>`<tr><td>${escapeHtml(item.kode)}</td><td>${escapeHtml(item.nama)}</td><td>${escapeHtml(item.kategori||'-')}</td></tr>`)
+    .join('');
+}
+
+function escapeHtml(s){
+  return norm(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+document.getElementById('btnUploadMaster').addEventListener('click', async ()=>{
+  const fileInput = document.getElementById('masterCoaFile');
+  const file = fileInput.files[0];
+  if(!file){ toast('Pilih file Excel master COA dulu.'); return; }
+  try{
+    const rows = await readWorkbook(file);
+    if(rows.length < 2){ toast('File kosong atau tidak terbaca.'); return; }
+    const headers = rows[0].map(h=>norm(h));
+    const idxKode = findHeaderIndex(headers, 'kode');
+    const idxNama = findHeaderIndex(headers, 'nama');
+    const idxKategori = findHeaderIndex(headers, 'kategori');
+    if(idxKode===-1 || idxNama===-1){
+      toast('Kolom "Kode" dan/atau "Nama" tidak ditemukan di baris judul file ini.');
+      return;
+    }
+    const newMaster = {};
+    for(let i=1;i<rows.length;i++){
+      const r = rows[i];
+      const kode = norm(r[idxKode]);
+      if(!kode) continue;
+      const id = 'a' + i + '_' + kode.replace(/[^a-zA-Z0-9]/g,'');
+      newMaster[id] = {
+        kode: kode,
+        nama: norm(r[idxNama]),
+        kategori: idxKategori>-1 ? norm(r[idxKategori]) : ''
+      };
+    }
+    if(!confirm('Ini akan MENGGANTI seluruh master COA yang tersimpan saat ini dengan ' + Object.keys(newMaster).length + ' akun dari file baru. Lanjutkan?')) return;
+    await db.ref('master_coa').set(newMaster);
+    toast('Master COA berhasil diupdate (' + Object.keys(newMaster).length + ' akun).');
+    fileInput.value = '';
+    loadMasterCoa();
+  }catch(err){
+    console.error(err);
+    toast('Gagal memproses file: ' + err.message);
+  }
+});
+
+/* ====================== KAMUS KETERANGAN ====================== */
+let kamusList = []; // array of strings
+
+function loadKamus(){
+  return db.ref('kamus_keterangan').once('value').then(snap=>{
+    const val = snap.val() || {};
+    kamusList = Object.values(val).map(v=>v.teks);
+  });
+}
+function addToKamus(teks){
+  teks = norm(teks);
+  if(!teks) return;
+  if(kamusList.some(k=>normLower(k)===normLower(teks))) { toast('Sudah ada di kamus.'); return; }
+  const id = normLower(teks).replace(/[^a-z0-9]/g,'') + Date.now();
+  db.ref('kamus_keterangan/'+id).set({teks:teks}).then(()=>{
+    kamusList.push(teks);
+    toast('Ditambahkan ke kamus: "' + teks + '"');
+  });
+}
+
+/* ====================== CEK JURNAL ====================== */
+let jurnalRows = [];    // raw rows incl header
+let jurnalHeaders = [];
+let lastResults = [];
+let lastFileName = '';
+
+document.getElementById('jurnalFile').addEventListener('change', async (e)=>{
+  const file = e.target.files[0];
+  if(!file) return;
+  lastFileName = file.name;
+  try{
+    const rows = await readWorkbook(file);
+    if(rows.length < 2){ toast('File kosong atau tidak terbaca.'); return; }
+    jurnalHeaders = rows[0].map(h=>norm(h));
+    jurnalRows = rows.slice(1).filter(r=>r.some(c=>norm(c)!==''));
+    buildMappingUI();
+    document.getElementById('mappingCard').style.display = 'block';
+    document.getElementById('resultCard').style.display = 'none';
+  }catch(err){
+    console.error(err);
+    toast('Gagal membaca file: ' + err.message);
+  }
+});
+
+function buildMappingUI(){
+  const opts = jurnalHeaders.map((h,i)=>`<option value="${i}">${escapeHtml(h || ('Kolom '+(i+1)))}</option>`).join('');
+  const emptyOpt = '<option value="-1">(tidak ada)</option>';
+
+  const selKode = document.getElementById('mapKode');
+  const selNama = document.getElementById('mapNama');
+  const selKet = document.getElementById('mapKeterangan');
+  selKode.innerHTML = opts;
+  selNama.innerHTML = opts;
+  selKet.innerHTML = emptyOpt + opts;
+
+  const guessKode = findHeaderIndex(jurnalHeaders, 'kode');
+  const guessNama = findHeaderIndex(jurnalHeaders, 'nama');
+  const guessKet = findHeaderIndex(jurnalHeaders, 'keterangan');
+
+  if(guessKode>-1) selKode.value = guessKode;
+  if(guessNama>-1) selNama.value = guessNama;
+  if(guessKet>-1) selKet.value = guessKet;
+}
+
+document.getElementById('btnProsesJurnal').addEventListener('click', async ()=>{
+  await loadKamus();
+  const idxKode = parseInt(document.getElementById('mapKode').value);
+  const idxNama = parseInt(document.getElementById('mapNama').value);
+  const idxKet = parseInt(document.getElementById('mapKeterangan').value);
+
+  if(masterCoaList.length===0){
+    toast('Master COA masih kosong. Upload master COA dulu di tab sebelumnya.');
+    return;
+  }
+
+  // Kumpulkan frekuensi keterangan unik dalam file ini utk deteksi typo internal
+  const freq = {};
+  if(idxKet>-1){
+    jurnalRows.forEach(r=>{
+      const v = norm(r[idxKet]);
+      if(v) freq[v] = (freq[v]||0) + 1;
+    });
+  }
+  const uniqueKets = Object.keys(freq);
+
+  function findSimilarInList(text, list, excludeSelf){
+    let best = null, bestScore = 0;
+    list.forEach(item=>{
+      if(excludeSelf && normLower(item)===normLower(text)) return;
+      const s = similarity(text, item);
+      if(s > bestScore){ bestScore = s; best = item; }
+    });
+    return {best, bestScore};
+  }
+
+  const results = jurnalRows.map(r=>{
+    const kode = norm(r[idxKode]);
+    const nama = norm(r[idxNama]);
+    const ket = idxKet>-1 ? norm(r[idxKet]) : '';
+    let status = 'ok';
+    let notes = [];
+
+    const masterMatch = masterCoaMap[normLower(kode)];
+    if(!kode){
+      status = 'danger'; notes.push('Kode akun kosong.');
+    } else if(!masterMatch){
+      status = 'danger'; notes.push('Kode akun tidak ditemukan di master COA.');
+    } else if(normLower(masterMatch.nama) !== normLower(nama)){
+      status = 'warn'; notes.push('Nama akun berbeda dari master (seharusnya: "' + masterMatch.nama + '").');
+    }
+
+    if(ket){
+      // 1) cek exact match ke kamus -> aman
+      const inKamusExact = kamusList.some(k=>normLower(k)===normLower(ket));
+      if(!inKamusExact){
+        // 2) cari yang mirip di kamus (typo vs istilah baku)
+        const simKamus = findSimilarInList(ket, kamusList, false);
+        // 3) cari yang mirip di dalam file ini sendiri, dgn frekuensi lebih tinggi (dianggap ejaan mayoritas)
+        const higherFreqOthers = uniqueKets.filter(k=>freq[k] > freq[ket] || (freq[k]===freq[ket] && k!==ket));
+        const simInternal = findSimilarInList(ket, higherFreqOthers, true);
+
+        if(simKamus.best && simKamus.bestScore >= 0.82 && simKamus.bestScore < 1){
+          if(status==='ok') status = 'warn';
+          notes.push('Keterangan mirip istilah di kamus: "' + simKamus.best + '" — kemungkinan typo.');
+        } else if(simInternal.best && simInternal.bestScore >= 0.82 && simInternal.bestScore < 1){
+          if(status==='ok') status = 'warn';
+          notes.push('Keterangan mirip versi lain di file ini: "' + simInternal.best + '" — kemungkinan typo.');
+        }
+      }
+    }
+
+    return {kode, nama, ket, status, notes: notes.join(' ')};
+  });
+
+  lastResults = results;
+  renderResults(results);
+});
+
+function renderResults(results){
+  const body = document.getElementById('resultTableBody');
+  const total = results.length;
+  const danger = results.filter(r=>r.status==='danger').length;
+  const warn = results.filter(r=>r.status==='warn').length;
+  const ok = total - danger - warn;
+
+  document.getElementById('summaryRow').innerHTML = `
+    <div class="summary-pill"><div class="num">${total}</div><div class="lbl">Total Baris</div></div>
+    <div class="summary-pill"><div class="num" style="color:var(--ok-text)">${ok}</div><div class="lbl">Sesuai</div></div>
+    <div class="summary-pill"><div class="num" style="color:var(--warn-text)">${warn}</div><div class="lbl">Perlu Review</div></div>
+    <div class="summary-pill"><div class="num" style="color:var(--danger-text)">${danger}</div><div class="lbl">Error</div></div>
+  `;
+
+  body.innerHTML = results.map((r,i)=>{
+    const badge = r.status==='ok' ? '<span class="badge ok">Sesuai</span>'
+      : r.status==='warn' ? '<span class="badge warn">Review</span>'
+      : '<span class="badge danger">Error</span>';
+    const rowClass = r.status==='ok' ? 'row-ok' : r.status==='warn' ? 'row-warn' : 'row-danger';
+    const btnTandai = r.ket ? `<button class="btn small secondary" onclick="addToKamus(${JSON.stringify(r.ket)})">Tandai OK</button>` : '';
+    return `<tr class="${rowClass}">
+      <td>${badge}</td>
+      <td>${escapeHtml(r.kode)}</td>
+      <td>${escapeHtml(r.nama)}</td>
+      <td>${escapeHtml(r.ket)}</td>
+      <td>${escapeHtml(r.notes) || '-'}</td>
+      <td>${btnTandai}</td>
+    </tr>`;
+  }).join('');
+
+  document.getElementById('resultCard').style.display = 'block';
+}
+
+document.getElementById('btnSimpanRiwayat').addEventListener('click', ()=>{
+  if(lastResults.length===0){ toast('Belum ada hasil untuk disimpan.'); return; }
+  const danger = lastResults.filter(r=>r.status==='danger').length;
+  const warn = lastResults.filter(r=>r.status==='warn').length;
+  const entry = {
+    tanggal: new Date().toLocaleString('id-ID'),
+    namaFile: lastFileName || '(tanpa nama)',
+    totalBaris: lastResults.length,
+    jumlahTemuan: danger + warn
+  };
+  db.ref('riwayat').push(entry).then(()=>{
+    toast('Riwayat pemeriksaan disimpan.');
+    loadRiwayat();
+  });
+});
+
+function loadRiwayat(){
+  db.ref('riwayat').orderByChild('tanggal').once('value').then(snap=>{
+    const val = snap.val() || {};
+    const list = Object.values(val).reverse();
+    const body = document.getElementById('riwayatTableBody');
+    if(list.length===0){
+      body.innerHTML = '<tr><td colspan="4" class="empty">Belum ada riwayat</td></tr>';
+      return;
+    }
+    body.innerHTML = list.map(item=>`<tr>
+      <td>${escapeHtml(item.tanggal)}</td>
+      <td>${escapeHtml(item.namaFile)}</td>
+      <td>${item.totalBaris}</td>
+      <td>${item.jumlahTemuan}</td>
+    </tr>`).join('');
+  });
+}
+
+/* ====================== TAB SWITCHING ====================== */
+document.querySelectorAll('.tab-btn').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
+    document.querySelectorAll('section.tab').forEach(s=>s.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById(btn.dataset.tab).classList.add('active');
+  });
+});
+</script>
+</body>
+</html>
