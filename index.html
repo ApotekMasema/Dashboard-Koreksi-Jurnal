@@ -311,6 +311,19 @@ function findHeaderIndex(headers, keyword){
   return idx;
 }
 
+// Coba beberapa kemungkinan nama kolom secara berurutan, kembalikan index pertama yang cocok.
+function findHeaderIndexAny(headers, keywords){
+  for(const kw of keywords){
+    const idx = headers.findIndex(h=>normLower(h).includes(kw));
+    if(idx>-1) return idx;
+  }
+  return -1;
+}
+
+const KODE_KEYWORDS = ['kode akun','kode perkiraan','no akun','no. akun','account code','kode','coa'];
+const NAMA_KEYWORDS = ['nama akun','account name','keterangan','uraian','deskripsi','description','nama'];
+const KATEGORI_KEYWORDS = ['kategori','category','jenis akun','tipe akun'];
+
 /* ====================== MASTER COA ====================== */
 let masterCoaList = []; // {kode, nama, kategori}
 let masterCoaMap = {};  // kode(lower) -> {kode,nama,kategori}
@@ -352,11 +365,11 @@ document.getElementById('btnUploadMaster').addEventListener('click', async ()=>{
     const rows = await readWorkbook(file);
     if(rows.length < 2){ toast('File kosong atau tidak terbaca.'); return; }
     const headers = rows[0].map(h=>norm(h));
-    const idxKode = findHeaderIndex(headers, 'kode');
-    const idxNama = findHeaderIndex(headers, 'nama');
-    const idxKategori = findHeaderIndex(headers, 'kategori');
+    const idxKode = findHeaderIndexAny(headers, KODE_KEYWORDS);
+    const idxNama = findHeaderIndexAny(headers, NAMA_KEYWORDS);
+    const idxKategori = findHeaderIndexAny(headers, KATEGORI_KEYWORDS);
     if(idxKode===-1 || idxNama===-1){
-      toast('Kolom "Kode" dan/atau "Nama" tidak ditemukan di baris judul file ini.');
+      toast('Kolom kode akun dan/atau nama akun tidak ditemukan di baris judul file ini. Judul kolom terbaca: ' + headers.filter(h=>h).join(', '));
       return;
     }
     const newMaster = {};
@@ -437,9 +450,9 @@ function buildMappingUI(){
   selNama.innerHTML = opts;
   selKet.innerHTML = emptyOpt + opts;
 
-  const guessKode = findHeaderIndex(jurnalHeaders, 'kode');
-  const guessNama = findHeaderIndex(jurnalHeaders, 'nama');
-  const guessKet = findHeaderIndex(jurnalHeaders, 'keterangan');
+  const guessKode = findHeaderIndexAny(jurnalHeaders, KODE_KEYWORDS);
+  const guessNama = findHeaderIndexAny(jurnalHeaders, NAMA_KEYWORDS);
+  const guessKet = findHeaderIndexAny(jurnalHeaders, ['keterangan transaksi','keterangan','deskripsi transaksi','uraian transaksi']);
 
   if(guessKode>-1) selKode.value = guessKode;
   if(guessNama>-1) selNama.value = guessNama;
